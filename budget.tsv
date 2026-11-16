@@ -1,0 +1,23 @@
+# Zeilenbudget FlowIQ v1, Fassung 5 (15.11.2026): gemessener Bedarf mit allen Paketen nach Paket V. Herleitung: docs/ARCHITEKTUR.md Anhang E.5.
+# Zählregel: physische Zeilen aller .swift-Dateien unter Sources/<modul>/ (Leer- und Kommentarzeilen zählen mit),
+# flowiq-tool liegt in Sources/FlowIQTool. Tests zählen nicht. Python unter scripts/korpus/ zählt nicht, darf aber
+# nie von der App zur Laufzeit gebraucht werden.
+# budget = Ziel je Modul, grenze = Puffer je Modul.
+# Die Zeile GESAMT bindet immer: 13300 (Panotti: 16.290, also 18 % weniger bei mehr Funktionen).
+# Vault-Vertrag und Nachlauf-Ablage gehören nach FlowIQStore, nicht nach FlowIQCloud (A.9).
+# Reicht der Platz nicht, greift die Streichliste (docs/ARCHITEKTUR.md Anhang K). Änderung nur im eigenen Commit.
+modul	budget	grenze
+FlowIQCore	490	520
+FlowIQLog	315	340
+FlowIQInput	395	430
+FlowIQAudio	1025	1100
+FlowIQRecording	645	700
+FlowIQSpeech	760	900
+FlowIQText	1315	1400
+FlowIQInsert	345	430
+FlowIQStore	1500	1600
+FlowIQCloud	650	700
+FlowIQDevices	550	700
+FlowIQ	5000	5200
+flowiq-tool	300	460
+GESAMT	13000	13300

@@ -1,0 +1,10 @@
+[
+  {"id": "elevenlabs/scribe-v2", "name": "ElevenLabs Scribe v2", "usdPerHour": 0.2196, "words": true, "speakers": true,
+   "format": "m4a", "hint": "Vorgabe und sicherer Rückfall, gleicher Anbieter wie heute; DE 3,6 % FLEURS (Messung Microsoft)"},
+  {"id": "microsoft/mai-transcribe-2", "name": "MAI-Transcribe-2", "usdPerHour": 0.10, "words": true, "speakers": true,
+   "format": "flac", "hint": "beste Qualität laut Hersteller (DE 2,8 % FLEURS), Aktionspreis; nur WAV, MP3, FLAC"},
+  {"id": "x-ai/grok-stt-2.0", "name": "Grok STT 2.0", "usdPerHour": 0.1008, "words": true, "speakers": true,
+   "format": "m4a", "hint": "Preis-Leistung; Deutsch belegt, deutsche Fehlerquote nicht belegt"},
+  {"id": "moondream/parakeet-ultra", "name": "Parakeet Ultra", "usdPerHour": 0.0612, "words": true, "speakers": false,
+   "format": "m4a", "hint": "günstig, keine Sprecher: nur Mikrofonspur und Diktat; Datenpolitik offen"}
+]

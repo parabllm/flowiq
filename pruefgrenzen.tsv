@@ -1,0 +1,20 @@
+# Prüfgrenzen für scripts/check.sh und scripts/ausnahmen.sh. Erhöhen nur im eigenen Commit mit Begründung.
+# tests: so viele Tests müssen mindestens laufen (weniger ist ROT).
+# ausnahmen: höchstens so viele markierte Ausnahmen je Modul (try?, @unchecked Sendable, nonisolated(unsafe), @preconcurrency).
+# Modulname wie der Ordner unter Sources/, Testordner zusammen als Tests. Fehlende Zeile heißt 0.
+art	name	wert
+tests	mindestens	816
+ausnahmen	FlowIQCore	0
+ausnahmen	FlowIQLog	0
+ausnahmen	FlowIQInput	0
+ausnahmen	FlowIQAudio	0
+ausnahmen	FlowIQRecording	0
+ausnahmen	FlowIQSpeech	0
+ausnahmen	FlowIQText	0
+ausnahmen	FlowIQInsert	0
+ausnahmen	FlowIQStore	0
+ausnahmen	FlowIQCloud	0
+ausnahmen	FlowIQDevices	0
+ausnahmen	FlowIQ	0
+ausnahmen	FlowIQTool	0
+ausnahmen	Tests	0

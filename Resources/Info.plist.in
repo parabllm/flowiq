@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template for scripts/bundle.sh (docs/ARCHITEKTUR.md E.4). Placeholders: @BUNDLE_ID@ @NAME@
+     @PROFILE@ @VERSION@ @BUILD@ @COMMIT@. -->
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>@BUNDLE_ID@</string>
+	<key>CFBundleName</key>
+	<string>@NAME@</string>
+	<key>CFBundleDisplayName</key>
+	<string>@NAME@</string>
+	<key>CFBundleExecutable</key>
+	<string>FlowIQ</string>
+	<key>CFBundleIconFile</key>
+	<string>FlowIQ</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>de</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@VERSION@</string>
+	<key>CFBundleVersion</key>
+	<string>@BUILD@</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>26.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSSupportsAutomaticTermination</key>
+	<false/>
+	<key>NSSupportsSuddenTermination</key>
+	<false/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>@NAME@ nimmt Diktate, Calls und Raumaufnahmen über das Mikrofon auf.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>@NAME@ erkennt Sprache lokal auf diesem Mac.</string>
+	<key>ATSApplicationFontsPath</key>
+	<string>Fonts</string>
+	<key>FlowIQProfile</key>
+	<string>@PROFILE@</string>
+	<key>FlowIQBuild</key>
+	<string>@BUILD@</string>
+	<key>FlowIQCommit</key>
+	<string>@COMMIT@</string>
+</dict>
+</plist>

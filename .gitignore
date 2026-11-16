@@ -1,0 +1,22 @@
+.DS_Store
+.env
+.env.*
+*.log
+
+# Private working data: corpus, registers with dictation text, measurements. Never commit.
+local/
+
+# Audio never belongs in this repo
+*.aac
+*.m4a
+*.wav
+*.caf
+*.mp3
+
+# Build output
+.build/
+.swiftpm/
+build/
+dist/
+*.app
+*.dSYM/

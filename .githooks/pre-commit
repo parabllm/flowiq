@@ -1,0 +1,10 @@
+#!/bin/bash
+# Privacy check of the staged content (R-002), and budget.tsv only ever in a commit of its own
+# (docs/ARCHITEKTUR.md E.5: changes need the owner's yes and must stay visible).
+root="$(git rev-parse --show-toplevel)"
+staged=$(git diff --cached --name-only)
+if printf '%s\n' "$staged" | grep -qx 'budget.tsv' && [ "$(printf '%s\n' "$staged" | grep -c .)" -gt 1 ]; then
+  echo "pre-commit: budget.tsv nur in einem eigenen Commit ändern"
+  exit 1
+fi
+exec "$root/scripts/datenschutz-check.sh"
