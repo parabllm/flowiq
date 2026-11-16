@@ -26,14 +26,17 @@ final class AppModel {
         var problem: String?, running: [Running] = [], recent: [RecentTranscript] = []
         var alerts: [AppAlert] = [], cloudSeconds = 0.0, mics: [String: String] = [:], mic: String?, newNames = 0
         var missing: [Permission] = [], post = AftercareState.idle, notInserted = false, tapRunning = false
+        var rejection: String?  // why the service refused an after-run request (400), shown in the menu
+        var keyWrong: Set<CloudProvider> = []  // the pasted text was no key (the key id): said next to the field
         var openRouterKey = false, orDraft = "", openRouterUSD = 0.0, troubles: [SessionKind: LiveTrouble] = [:]
         var section = MainView.Section.history  // the main window's sidebar (16.11.)
         var keysShared = false, iconHint = false  // Panotti holds the same keys; the menu bar hid the icon
-        var screenGranted = true, down: Set<TrackKind> = [], folderOK = true, ticks = 0
+        var screenGranted = true, down: Set<TrackKind> = [], folderOK = true
         // the menu's lines for what the pill no longer says (16.11.): a failed dictation (true: audio kept),
         // the headset lost mid-recording, the device import, recordings the Mac slept through
         var dictationFailed: Bool?, micLost: String?, importing = ImportProgress.hidden, importFailed: [String] = []
         var pauses: [SessionKind: String] = [:], device: DeviceNotice?  // what the last look at the recorders found
+        var crashNote: String?  // the previous run crashed: one plain line until the menu closed (16.11.)
     }
     /// The running parts, set once at launch.
     struct Parts {
@@ -45,7 +48,7 @@ final class AppModel {
         var filing: (@MainActor (StoreLocations) -> Filing)?
         var makeDevices: (@MainActor (StoreLocations) -> DevicesModel)?
         var orKeys: CloudKeys?, models: [OpenRouterModel] = [], meter: UsageMeter?
-        var hotKeys: HotKeys?, pendingKeys = HotKey.allCases, sleptAt: Date?, retrying = false
+        var hotKeys: HotKeys?, pendingKeys = HotKey.allCases, sleptAt: Date?, retrying = false, ticks = 0
     }
     let profile: Profile, panotti: URL?, pill: PillView, setup = PermissionModel(), keep = Mutex(true)  // R-117
     var settings: FlowIQCore.Settings
@@ -79,10 +82,15 @@ final class AppModel {
                   running: ui.running.filter { !parts.stopping.contains($0.kind) }, alerts: ui.alerts,
                   recent: ui.recent, newNames: ui.newNames, cloudSeconds: ui.cloudSeconds,
                   limitMinutes: settings.cloudLimitMinutes, mics: ui.mics, mic: ui.mic, openRouterKey: ui.openRouterKey,
-                  openRouterUSD: ui.openRouterUSD, activity: Self.activity(
+                  openRouterUSD: ui.openRouterUSD, activity: (ui.crashNote.map { [$0] } ?? []) + Self.activity(
                       locked: pill.scene.dictation == .dictating && pill.scene.locked,
                       starting: Set(parts.starting.keys), stopping: parts.stopping, afterRun: parts.afterRun,
                       importing: ui.importing, device: ui.device))
+    }
+    /// After a crash: what the rescue of `laufend/` found, no warning (the pill says nothing).
+    nonisolated static func crashNote(_ name: String, _ rescued: (saved: Int, failed: Int)) -> String {
+        name + " war unerwartet beendet, " + (rescued.failed > 0 ? "eine Aufnahme ließ sich nicht ganz retten"
+            : rescued.saved > 0 ? "unterbrochene Aufnahme gerettet" : "nichts verloren")
     }
     /// What runs besides the recordings, one plain line each (never a warning): as long as the pill shows it.
     nonisolated static func activity(locked: Bool, starting: Set<SessionKind>, stopping: Set<SessionKind>,
@@ -298,17 +306,28 @@ final class AppModel {
             await refresh()
         }
     }
-    /// The key goes straight to the keychain (M.7); an empty field removes it. Nothing is sent to check it.
+    /// The key goes straight to the keychain (M.7); an empty field removes it. Nothing is sent to check it, but a
+    /// text without the key's prefix (the key id, 16.11.) is not saved. A new key starts refused after-runs again.
     func storeKey(openRouter: Bool = false) {
         guard let keys = openRouter ? parts.orKeys : parts.cloud?.keys else { return }
-        let draft = openRouter ? ui.orDraft : ui.keyDraft
+        let draft = (openRouter ? ui.orDraft : ui.keyDraft).trimmingCharacters(in: .whitespacesAndNewlines)
+        (ui.keyDraft, ui.orDraft) = ("", "")
+        ui.keyWrong.remove(keys.provider)
+        guard draft.isEmpty || draft.hasPrefix(keys.provider.keyPrefix) else {
+            ui.keyWrong.insert(keys.provider)
+            return
+        }
         do { if draft.isEmpty { try keys.remove() } else { try keys.store(draft) } } catch {
             ui.problem = "Schlüsselbund verweigert"
         }
-        (ui.keyDraft, ui.orDraft) = ("", "")
         let usable = keys.hasKey && cloudAllowed
         if openRouter { ui.openRouterKey = usable } else { ui.hasKey = usable }
         change { _ in }
+        if !draft.isEmpty { Task { await parts.recorder?.filing.aftercare.trigger(.newKey); await refresh() } }
+    }
+    nonisolated static func keyHint(_ p: CloudProvider) -> String {
+        (p == .elevenLabs ? "Das ist die Schlüssel-ID." : "Das ist nicht der Schlüssel.")
+            + " Der Schlüssel beginnt mit \(p.keyPrefix)."
     }
     /// Panotti's `.env`, only on a click (R-066).
     func importKey() {
@@ -338,6 +357,7 @@ final class AppModel {
         await recorder.filing.aftercare.settle()
         let place = settings.locations(Paths(profile: profile)), next = make(place)
         if await recorder.use(next) { await next.aftercare.trigger(.appStart) } else { NSSound.beep() }
+        parts.devices?.stop()
         parts.devices = parts.makeDevices?(place)  // the device archive follows as well
         await refresh()
     }
@@ -370,6 +390,10 @@ final class AppModel {
         (recordings.models, names.lexicon) = (parts.models, parts.stack?.lexicon)
         (review.lexicon, review.journal, review.folder) = (parts.stack?.lexicon, parts.stack?.journal,
                                                            Paths(profile: profile).support)
+        history.redo = { [weak self] job in
+            guard let after = await self?.parts.recorder?.filing.aftercare else { throw PostFailure.keyMissing }
+            return try await after.redo(job)
+        }
         recordings.postNow = { [weak self] row, choice, model in
             let mode: RecordingMode = row.kind == "Call" ? .call : row.kind == "Raum" ? .room : .device
             guard let after = await self?.parts.recorder?.filing.aftercare else { return }
@@ -396,16 +420,17 @@ final class AppModel {
         parts.refreshes += 1
         let generation = parts.refreshes, snapshot = await p.recorder?.snapshot() ?? []
         guard generation == parts.refreshes else { return }  // a newer refresh has a newer picture
-        ui.running = snapshot
-        ui.post = await p.recorder?.filing.aftercare.visibleState ?? .idle
+        put(\.running, snapshot)
+        put(\.post, await p.recorder?.filing.aftercare.visibleState ?? .idle)
+        put(\.rejection, await p.recorder?.filing.aftercare.rejection)
         for kind in parts.afterRun {
             if await p.recorder?.filing.aftercare.working(kind == .call ? .call : .room) == true { continue }
             parts.afterRun.remove(kind)
             pill.saved(kind)  // the after-run is done, or waits for a retry that the menu shows
         }
-        ui.troubles = await p.recorder?.troubles() ?? [:]
-        ui.ticks += 1
-        if !full && ui.ticks % 60 == 0 { await p.recorder?.filing.aftercare.trigger(.timer) }
+        put(\.troubles, await p.recorder?.troubles() ?? [:])
+        parts.ticks += 1
+        if !full && parts.ticks % 60 == 0 { await p.recorder?.filing.aftercare.trigger(.timer) }
         if full {
             let (folder, keys, allowed) = (folder, p.cloud?.keys, cloudAllowed)
             (ui.recent, ui.mics, ui.hasKey, ui.folderOK) = await Task.detached {
@@ -428,10 +453,14 @@ final class AppModel {
             startTap()
             registerKeys()
         }
-        Self.settle(&ui)
-        ui.device = parts.devices?.notice
+        var settled = ui
+        Self.settle(&settled)
+        put(\.down, settled.down)
+        put(\.micLost, settled.micLost)
+        put(\.pauses, settled.pauses)
+        put(\.device, parts.devices?.notice)
         let running = ui.running, silent = Self.silent(ui)
-        ui.alerts = Self.alerts(ui, silent: silent, limit: settings.cloudLimitMinutes ?? 0)
+        put(\.alerts, Self.alerts(ui, silent: silent, limit: settings.cloudLimitMinutes ?? 0))
         if !wasSilent && silent { announce("Mikrofon liefert keinen Ton") }
         let shown = ui, stopping = parts.stopping
         pill.update { Self.show(shown, in: &$0, except: stopping) }
@@ -449,6 +478,11 @@ final class AppModel {
             p.tick?.invalidate()
             parts.tick = nil
         }
+    }
+    /// Writes only a changed value: every write of `ui` draws the open window anew, and the busy tick wrote once
+    /// a second (16.11.: sampled at 25 % CPU in the history list, the log showed 90 % for hours while idle).
+    func put<T: Equatable>(_ path: WritableKeyPath<Shown, T>, _ value: T) {
+        if ui[keyPath: path] != value { ui[keyPath: path] = value }
     }
 
     /// The running recordings as the pill shows them (not those being stopped): the language, and a problem that
@@ -489,7 +523,9 @@ final class AppModel {
         if silent { list.append(.micSilent) }
         if ui.running.contains(where: { $0.fallback == .networkError }) { list.append(.networkDown) }
         if ui.running.contains(where: { $0.fallback == .limit }) { list.append(.limitReached(limit)) }
-        if case .paused = ui.post { list.append(.keyRejected) }
+        if let why = ui.rejection { list.append(.postRejected(why)) } else if case .paused = ui.post {
+            list.append(.keyRejected)
+        }
         if case .waiting(let n) = ui.post { list.append(.postWaiting(n)) }
         if ui.notInserted { list.append(.notInserted) }
         if !ui.folderOK { list.append(.folderMissing) }

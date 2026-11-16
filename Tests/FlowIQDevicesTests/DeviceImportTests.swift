@@ -121,6 +121,26 @@ import Testing
         #expect(await rig.transcriber.state.calls.isEmpty)
     }
 
+    /// 16.11.: a new storage place builds new devices; a stopped watch keeps no observer, even when refreshed
+    /// again afterwards, and the progress reader of a closed importer ends.
+    @MainActor @Test func aStoppedWatchKeepsNoObserverAndAClosedImporterEndsItsReader() async throws {
+        let rig = try DeviceRig()
+        let importer = try await rig.importer()
+        let reader = Task { for await _ in importer.progress {}; return true }
+        var observed = 0
+        for _ in 0..<200 {
+            let watch = DeviceWatch(importer: importer)
+            await watch.refresh()
+            observed += watch.observing ? 1 : 0
+            watch.stop()
+            await watch.refresh()
+            observed -= watch.observing ? 0 : 1
+        }
+        #expect(observed == 0)
+        importer.close()
+        #expect(await reader.value)
+    }
+
     /// Appendix D, A.11, G.2: development never imports from a real device profile, and refuses a volume named
     /// like a real device even when its identifier matches a test profile.
     @Test(arguments: ["DVT1600", "ZEPHYR", "NO NAME"]) func developmentRefusesRealDevices(name: String) async throws {

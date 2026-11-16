@@ -13,11 +13,12 @@ nonisolated struct Runtime: Sendable {
     static let fallback = Logger(subsystem: "de.flowiq", category: "app")
     let profile: Profile, log: EventLog, store: SettingsStore
     let monitor = ResourceMonitor()  // periodic RAM and CPU line (16.11.), started once the recorder exists
+    var crashed = false, marker: URL?  // the previous run ended without app.stop; this run's marker (16.11.)
     @concurrent
     static func start(profile: Profile, info: BuildInfo) async throws -> (Runtime, SettingsStore.Loaded) {
         let paths = Paths(profile: profile), fs = SafeFS(paths: paths)
         try paths.prepare(using: fs)
-        let runtime = Runtime(profile: profile, log: EventLog(directory: paths.log, fs: fs),
+        var runtime = Runtime(profile: profile, log: EventLog(directory: paths.log, fs: fs),
                               store: SettingsStore(paths: paths, fs: fs))
         let loaded = await runtime.store.load()
         runtime.log.record(LogEvent("app.start", [
@@ -25,6 +26,7 @@ nonisolated struct Runtime: Sendable {
             "pid": .int(Int64(ProcessInfo.processInfo.processIdentifier)),
             "fonts_bundled": .bool(FlowIQTheme.Font.isBundled),
         ]))
+        (runtime.crashed, runtime.marker) = (runtime.previousRun(paths, fs: fs), paths.support.appending(path: "lauf"))
         if let problem = loaded.problem {
             runtime.log.record(LogEvent("settings.problem", level: .error, ["text": .string(describe(problem))]))
         }
@@ -62,8 +64,34 @@ nonisolated struct Runtime: Sendable {
     func stop() async {
         monitor.stop()
         await sample("stop")
+        if let marker, case let fs = SafeFS(confinedTo: marker.deletingLastPathComponent()) {
+            log.attempt("run_marker_failed") { try fs.delete(marker) }
+        }
         log.record(LogEvent("app.stop"))
         await log.flush()
+    }
+    /// The marker `lauf` stands from the start to `stop` (16.11.): found at a start, the previous run ended without
+    /// app.stop. Logged with the newest crash report of this app since that start, its path only; nothing is sent.
+    func previousRun(_ paths: Paths, fs: SafeFS, app: String = ProcessInfo.processInfo.processName,
+                     reports: URL = URL.libraryDirectory.appending(path: "Logs/DiagnosticReports")) -> Bool {
+        let marker = paths.support.appending(path: "lauf"), since = Self.modified(marker)
+        defer { log.attempt("run_marker_failed") { try fs.replace(marker, with: Data()) } }
+        guard let since else { return false }
+        var found: [URL] = []
+        do { found = try FileManager.default.contentsOfDirectory(at: reports, includingPropertiesForKeys: nil) } catch {
+            log.record(.failure("crash_reports_unreadable", error))
+        }
+        let newest = found.filter { $0.lastPathComponent.hasPrefix(app + "-") && $0.pathExtension == "ips" }
+            .compactMap { url in Self.modified(url).map { (url, $0) } }.filter { $0.1 >= since }.max { $0.1 < $1.1 }
+        var fields: [String: LogValue] = ["since": .string(since.ISO8601Format())]
+        if let newest { fields["report"] = .string(newest.0.path) }
+        log.record(LogEvent("previous_run_crashed", level: .error, fields))
+        return true
+    }
+    static func modified(_ url: URL) -> Date? {
+        do { return try url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate } catch {
+            return nil
+        }
     }
     /// Menu and log text for a problem (German, it is shown to the user).
     static func describe(_ problem: Problem) -> String {

@@ -99,8 +99,11 @@ public struct PostTranscript: Sendable {
 /// Quota, key and policy pause a job until a click or the next day; else 1, 5, 15, 60 min, then hourly.
 public enum PostFailure: Error, Sendable, Equatable {
     case networkDown, quotaExhausted, keyMissing, server(status: Int), empty, notAllowed, piecesFailed
+    case rejected(String)  // 400 or 422: the request itself is wrong, a retry cannot help; the service's reason
     /// The audio left the Mac before this failure, so it counts as usage (R-101).
-    public var sent: Bool { if case .server = self { true } else { self == .empty || self == .piecesFailed } }
+    public var sent: Bool {
+        switch self { case .server, .rejected, .empty, .piecesFailed: true; default: false }
+    }
 }
 
 /// Seconds of audio sent to the cloud per source and kind, and the optional monthly limit (M.8, R-101).

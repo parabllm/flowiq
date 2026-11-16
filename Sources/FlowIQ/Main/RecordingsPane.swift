@@ -6,7 +6,9 @@ nonisolated struct RecordingRow: Sendable, Equatable, Identifiable {
     enum Post: Hashable, Sendable { case local, waiting, paused, running, done }
     let url: URL, date: Date, kind: String, duration: String, language: String, live: String, post: Post
     let audio: URL?
+    var hasAudio = false  // the audio the header names is still there: only then a (new) precise version can start
     var id: URL { url }
+    var seconds: Double { duration.split(separator: ":").reduce(0) { $0 * 60 + (Double($1) ?? 0) } }
     /// The header keys of the vault contract (A.9, M.10): phase, after-run mark, pipeline, live source.
     static func read(_ url: URL) -> RecordingRow? {
         guard let head = FileManager.default.contents(atPath: url.path).map({ String(decoding: $0.prefix(4096),
@@ -34,7 +36,8 @@ nonisolated struct RecordingRow: Sendable, Equatable, Identifiable {
         let audio = source.map { kind == "Call" ? $0.appending(path: "mikrofon.m4a") : $0 }
         return RecordingRow(url: url, date: date, kind: kind, duration: f["dauer"] ?? "–",
                             language: (f["sprache"] ?? "de").hasPrefix("en") ? "Englisch" : "Deutsch",
-                            live: live, post: post, audio: audio)
+                            live: live, post: post, audio: audio,
+                            hasAudio: source.map { FileManager.default.fileExists(atPath: $0.path) } ?? false)
     }
     static let text: [Post: String] = [.local: "fertig auf dem Mac", .waiting: "genauere Fassung wartet",
         .paused: "genauere Fassung angehalten: Schlüssel oder Kontingent fehlt", .running: "läuft",
@@ -52,6 +55,13 @@ final class RecordingsModel {
     @ObservationIgnored var models: [OpenRouterModel] = []
     var rows: [RecordingRow] = []
     var note = ""
+    var asking: RecordingRow?  // "Neu mit ElevenLabs" over more than 30 minutes asks first
+    /// A finished precise version once more over ElevenLabs; the file is replaced in place as in any after-run.
+    func renew(_ row: RecordingRow, confirmed: Bool = false) async {
+        if !confirmed, HistoryModel.renewQuestion(count: 1, seconds: row.seconds) != nil { return asking = row }
+        asking = nil
+        await postNow(row, .elevenLabs, nil)
+    }
     init(folder: URL? = nil) { self.folder = folder }
     func load() async {
         guard let folder else { return }
@@ -110,6 +120,11 @@ struct RecordingsPane: View {
         }
         .padding(.horizontal, t.Main.inset)
         .task { await model.load() }
+        .sheet(isPresented: Binding(get: { model.asking != nil }, set: { if !$0 { model.asking = nil } })) {
+            let r = model.asking, ask = HistoryModel.renewQuestion(count: 1, seconds: r?.seconds ?? 0, recording: true)
+            DeleteConfirm(count: 1, onDelete: { Task { if let r { await model.renew(r, confirmed: true) } } },
+                          onCancel: { model.asking = nil }, renew: ask)
+        }
     }
     private func row(_ r: RecordingRow, last: Bool) -> some View {
         let t = FlowIQTheme.self, failed = r.post == .paused
@@ -122,7 +137,7 @@ struct RecordingsPane: View {
                     .textStyle(t.Font.micro, failed ? t.Color.warningText : t.Color.textMuted)
             }
             Spacer()
-            if failed || r.post == .waiting || r.post == .local {
+            if failed || r.post == .waiting || r.post == .local && r.hasAudio {
                 Button(failed ? "Erneut versuchen" : "Genauere Fassung starten") {
                     Task { r.post == .local ? await model.postNow(r, nil, nil) : await model.retry() }
                 }
@@ -134,6 +149,7 @@ struct RecordingsPane: View {
                 .help("Transkript öffnen").accessibilityLabel("Transkript öffnen")
             Menu {
                 Button("Im Finder zeigen") { NSWorkspace.shared.activateFileViewerSelecting([r.url]) }
+                if r.post == .done && r.hasAudio { Button("Neu mit ElevenLabs") { Task { await model.renew(r) } } }
                 Menu("Genauere Fassung nur diesmal über") {  // the setting stays as it is
                     Button("ElevenLabs") { Task { await model.postNow(r, .elevenLabs, nil) } }
                     ForEach(model.models, id: \.id) { m in

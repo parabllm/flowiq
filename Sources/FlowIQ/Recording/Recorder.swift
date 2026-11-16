@@ -52,13 +52,16 @@ actor Recorder {
     }
     func inserted(_ job: DictationJob) async { await filing.aftercare.dictationInserted(job) }
     /// At launch (R-039): what a dead instance left in `laufend/` is repacked and archived, live files rebuilt.
-    func rescue() async {
+    /// Returns the tracks saved and those that could not be (a failed rescue counts as one).
+    @discardableResult func rescue() async -> (saved: Int, failed: Int) {
         do {
             let lock = try held()
-            _ = try await Rescue.run(laufend: paths.laufend, deliverTo: filing.store.locations.archiveAudio,
+            let report = try await Rescue.run(laufend: paths.laufend, deliverTo: filing.store.locations.archiveAudio,
                 fs: filing.fs, log: log, lock: lock)
             _ = try await filing.store.recoverOrphans()
+            return (report.rescuedTracks.count, report.failed.count)
         } catch { log.record(.failure("rescue_failed", error)) }
+        return (0, 1)
     }
     var isRecording: Bool { !active.isEmpty }
     func start(_ kind: SessionKind, language: RecordingLanguage, engine: LiveEngine) async throws {

@@ -7,10 +7,11 @@ public struct ResourceSample: Sendable, Equatable {
     public let residentBytes: UInt64
     /// User plus system time of all threads, finished ones included.
     public let cpuNanos: UInt64
+    public var threads = 0  // of this process now (16.11.: a leak shows here first)
     public var fields: [String: LogValue] {
         ["footprint_mb": .double(Double(footprintBytes) / 1_048_576),
-         "resident_mb": .double(Double(residentBytes) / 1_048_576),
-         "cpu_ms": .double(Double(cpuNanos) / 1_000_000)]
+         "resident_mb": .double(Double(residentBytes) / 1_048_576), "pid": .int(Int64(getpid())),
+         "cpu_ms": .double(Double(cpuNanos) / 1_000_000), "threads": .int(Int64(threads))]
     }
 }
 
@@ -25,9 +26,11 @@ public enum ResourceProbe {
         assert(pthread_main_np() == 0, "ResourceProbe must not run on the main thread")
         let vm: task_vm_info_data_t = try info(TASK_VM_INFO, "TASK_VM_INFO")
         let time: task_absolutetime_info_data_t = try info(TASK_ABSOLUTETIME_INFO, "TASK_ABSOLUTETIME_INFO")
-        let ticks = Double(time.total_user + time.total_system)
+        let ticks = Double(time.total_user + time.total_system), size = Int32(MemoryLayout<proc_taskinfo>.size)
+        var task = proc_taskinfo()
+        let threads = proc_pidinfo(getpid(), PROC_PIDTASKINFO, 0, &task, size) == size ? Int(task.pti_threadnum) : 0
         return ResourceSample(footprintBytes: vm.phys_footprint, residentBytes: vm.resident_size,
-                              cpuNanos: UInt64(ticks * MachTime.nanosPerTick))
+                              cpuNanos: UInt64(ticks * MachTime.nanosPerTick), threads: threads)
     }
     private static func info<T>(_ flavor: Int32, _ name: String) throws(Failure) -> T {
         let words = MemoryLayout<T>.size / MemoryLayout<natural_t>.size
@@ -44,21 +47,44 @@ public enum ResourceProbe {
 /// The C macro `mach_task_self()` is not imported into Swift (SDK 27.2); this restores the name.
 func mach_task_self() -> mach_port_t { mach_task_self_ }
 
+/// Live counts of long-lived things (taps, observers): +1 where made, -1 where ended; in every `resources` line.
+public enum Census {
+    static let counts = Mutex<[String: Int]>([:])
+    public static func add(_ name: String, _ delta: Int) { counts.withLock { $0[name, default: 0] += delta } }
+}
+
+/// Growth over a run, idle only (16.11.): threads, census over 2x start and +12, memory +400 MB (assumed); once each.
+public struct GrowthWatch: Sendable {
+    private var base: [String: Double]?, said: Set<String> = []
+    public mutating func check(_ now: [String: Double]) -> [String] {
+        guard let base else { base = now; return [] }
+        return now.filter { name, value in
+            let start = base[name] ?? 0
+            return name == "footprint_mb" ? value > start + 400 : value > max(2 * start, start + 12)
+        }.keys.sorted().filter { said.insert($0).inserted }
+    }
+}
+
 /// Periodic memory and CPU line for performance reviews (16.11., beyond A.2's event-only sampling): every
-/// 60 s idle, every 10 s while `recording` says so; `cpu_pct` over the interval.
+/// 60 s idle, every 10 s while `recording` says so; `cpu_pct` over the interval. Growth is an error line.
 public final class ResourceMonitor: Sendable {
     private let task = Mutex<Task<Void, Never>?>(nil)
     public init() {}
     public func start(log: EventLog, recording: @escaping @Sendable () async -> Bool) {
         let loop = Task.detached(priority: .utility) {
-            var last: (cpu: UInt64, at: ContinuousClock.Instant)?
+            var last: (cpu: UInt64, at: ContinuousClock.Instant)?, watch = GrowthWatch()
             while !Task.isCancelled {
-                let busy = await recording()
+                let busy = await recording(), census = Census.counts.withLock { $0 }
                 do {
                     let s = try await ResourceProbe.sample(), now = ContinuousClock.now
                     let pct = last.map { Double(s.cpuNanos - $0.cpu) / ((now - $0.at) / .nanoseconds(1)) * 100 } ?? 0
-                    log.record(LogEvent("resources", s.fields.merging(["reason": "periodic", "recording": .bool(busy),
-                                                                        "cpu_pct": .double(pct)]) { a, _ in a }))
+                    var fields = s.fields.merging(census.mapValues { .int(Int64($0)) }) { $1 }
+                    fields.merge(["reason": "periodic", "recording": .bool(busy), "cpu_pct": .double(pct)]) { $1 }
+                    log.record(LogEvent("resources", fields))
+                    let sizes = ["threads": Double(s.threads), "footprint_mb": Double(s.footprintBytes) / 1_048_576]
+                    let grown = busy ? [] : watch.check(census.mapValues(Double.init).merging(sizes) { $1 })
+                    fields["what"] = .string(grown.joined(separator: ","))
+                    if !grown.isEmpty { log.record(LogEvent("resource_growth", level: .error, fields)) }
                     last = (s.cpuNanos, now)
                 } catch { log.record(.failure("resources_failed", error)) }
                 guard await ContinuousClock().pause(busy ? .seconds(10) : .seconds(60)) else { return }

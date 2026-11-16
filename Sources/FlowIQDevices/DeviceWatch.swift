@@ -5,18 +5,26 @@ import Foundation
 
 /// Mount watching through `NSWorkspace` (V-l), only while the devices switch is on (R-076). The app calls
 /// `refresh()` after a switch change and `scan()` once at launch for what is already plugged in. A mount is
-/// scanned, an unmount only looked at; a watch that was replaced (new storage place) does nothing any more.
+/// scanned, an unmount only looked at; a replaced watch (new storage place) is stopped and keeps no observer.
 @MainActor public final class DeviceWatch {
     let importer: DeviceImporter
-    private var tokens: [any NSObjectProtocol] = []
+    private var tokens: [any NSObjectProtocol] = [], ended = false
     public var observing: Bool { !tokens.isEmpty }
     public init(importer: DeviceImporter) { self.importer = importer }
+    /// For good: the observers go (16.11.: before, every change of the storage place left two behind).
+    public func stop() {
+        tokens.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
+        Census.add("mount_observers", -tokens.count)
+        (tokens, ended) = ([], true)
+    }
     public func refresh() async {
         let center = NSWorkspace.shared.notificationCenter, on = await importer.config.enabled
-        if !on {
+        if !on || ended {
             tokens.forEach(center.removeObserver)
+            Census.add("mount_observers", -tokens.count)
             tokens = []
         } else if tokens.isEmpty {
+            Census.add("mount_observers", 2)
             tokens = [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification].map { name in
                 center.addObserver(forName: name, object: nil, queue: nil) { [weak self, importer] _ in
                     Task {

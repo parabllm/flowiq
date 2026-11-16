@@ -115,11 +115,10 @@ struct OpenRouterBatch: PostProcessor {
         var body: [String: Any] = ["model": model,
                                    "input_audio": ["data": audio.base64EncodedString(), "format": format],
                                    "language": String(job.language.prefix(2)), "response_format": "verbose_json",
-                                   "timestamp_granularities": ["word"],
+                                   "timestamp_granularities": ["word"], "diarize": diarize,  // top level (doc)
                                    "provider": ["data_collection": "deny", "allow_fallbacks": false,
-                                                "options": ["elevenlabs": ["diarize": diarize]
-                                                    .merging(job.mode == .room ? ["num_speakers": 8] : [:]) {
-                                                        a, _ in a }]]]
+                                                "options": ["elevenlabs": job.mode == .room ? ["num_speakers": 8]
+                                                    : [:]]]]
         if !job.terms.isEmpty { body["keyterms"] = job.terms }
         var request = URLRequest(url: endpoint)
         (request.httpMethod, request.timeoutInterval) = ("POST", 240)
@@ -136,6 +135,7 @@ struct OpenRouterBatch: PostProcessor {
             offline = false
             guard let (data, status) = answer else { continue }
             if [401, 402, 403].contains(status) { throw status == 401 ? PostFailure.keyMissing : .quotaExhausted }
+            if [400, 422].contains(status) { throw Self.failure(status, data) }  // a second try cannot help
             guard status == 200, let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 continue
             }
@@ -147,13 +147,14 @@ struct OpenRouterBatch: PostProcessor {
             var words: [Word] = timed.compactMap { w in
                 guard let text = w["word"] as? String ?? w["text"] as? String, let start = w["start"] as? Double,
                       let end = w["end"] as? Double else { return nil }
+                let who = (w["speaker_label"] ?? w["speaker_id"] ?? w["speaker"]) as? String  // or a number (doc)
                 return (window.lowerBound + start, window.lowerBound + end,
-                        w["speaker"] as? String ?? w["speaker_id"] as? String ?? "speaker_0", text)
+                        who ?? (w["speaker"] as? Int).map { "speaker_\($0)" } ?? "speaker_0", text)
             }
             if words.isEmpty, let text = json["text"] as? String, !text.isEmpty {
                 words = [(window.lowerBound, window.upperBound, "speaker_0", text)]
             }
-            return (words, timed.contains { $0["speaker"] != nil || $0["speaker_id"] != nil })
+            return (words, timed.contains { w in ["speaker", "speaker_label", "speaker_id"].contains { w[$0] != nil } })
         }
         if offline { throw PostFailure.networkDown }
         return nil
@@ -176,6 +177,11 @@ struct OpenRouterBatch: PostProcessor {
     }
     static func clock(_ s: Double) -> String {
         String(format: "%02d:%02d:%02d", Int(s) / 3600, Int(s) / 60 % 60, Int(s) % 60)
+    }
+    /// 401 key, 402 and 429 quota; 400 and 422 mean the request is wrong and carry the answer's own reason.
+    static func failure(_ status: Int, _ body: Data) -> PostFailure {
+        [400, 422].contains(status) ? .rejected(String("\(status) \(JSON.errorText(body))".prefix(200)))
+            : status == 401 ? .keyMissing : [402, 429].contains(status) ? .quotaExhausted : .server(status: status)
     }
     /// The real wire (only `CloudGate` builds this type).
     static let post: @Sendable (URLRequest) async throws -> (Data, Int) = { request in

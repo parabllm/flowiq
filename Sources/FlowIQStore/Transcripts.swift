@@ -10,13 +10,27 @@ public struct StoreLocations: Sendable {
     }
 }
 
-/// Terms for the services, only from confirmed entries (A.9, R-033, R-104), independent of the entries' order.
+/// Terms for the services, only from confirmed entries (A.9, R-033, R-104), independent of the entries' order:
+/// family members first, then by use in the last 30 days, then by name (LEXIKON-KONZEPT 6). ElevenLabs takes
+/// 50 of at most 20 characters live and at most 50 characters per term in the after-run (its documentation).
 public enum CloudTerms {
-    public static func live(from entries: [CanonEntry]) -> [String] { pick(entries, count: 50, length: 20) }
-    public static func post(from entries: [CanonEntry]) -> [String] { pick(entries, count: 100, length: .max) }
-    static func pick(_ entries: [CanonEntry], count: Int, length: Int) -> [String] {
-        Array(Set(entries.filter { $0.status == .confirmed && $0.canonical.count <= length }.map(\.canonical))
-            .sorted().prefix(count))
+    public static func live(from entries: [CanonEntry], now: Date = Date()) -> [String] {
+        pick(entries, count: 50, length: 20, now: now)
+    }
+    public static func post(from entries: [CanonEntry], now: Date = Date()) -> [String] {
+        pick(entries, count: 100, length: 50, now: now)
+    }
+    static func pick(_ entries: [CanonEntry], count: Int, length: Int, now: Date) -> [String] {
+        let since = now.addingTimeInterval(-30 * 86_400)
+        func uses(_ e: CanonEntry) -> Int {  // counters applied in the window, weighted by their benefit
+            ([e.counters] + e.hearingVariants.map(\.counters)).filter { $0.lastAppliedAt.map { $0 >= since } ?? false }
+                .reduce(0) { $0 + max(1, $1.benefit) }
+        }
+        let ranked = entries.filter { $0.status == .confirmed && $0.canonical.count <= length }
+            .map { (family: $0.family == nil ? 1 : 0, uses: -uses($0), name: $0.canonical) }
+            .sorted { ($0.family, $0.uses, $0.name) < ($1.family, $1.uses, $1.name) }
+        var seen = Set<String>()
+        return Array(ranked.map(\.name).filter { seen.insert($0).inserted }.prefix(count))
     }
 }
 

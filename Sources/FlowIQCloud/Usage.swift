@@ -37,9 +37,10 @@ public actor UsageMeter: CloudUsage {
     public func flush() {
         guard !blocked else { return }
         saved = now()
-        do { try fs.replace(file, with: JSONEncoder().encode(months)) } catch {  // the next try follows in 10 s
-            log?.record(LogEvent("usage_unsaved", level: .error))
-        }
+        do {  // the folder is made here: nothing else creates it (16.11.: every save failed, `usage_unsaved`)
+            try fs.makeFolder(file.deletingLastPathComponent())
+            try fs.replace(file, with: JSONEncoder().encode(months))
+        } catch { log?.record(LogEvent("usage_unsaved", level: .error)) }  // the next try follows in 10 s
     }
     public func menuLine() -> String {
         let reached = limitReached ? ", Monatsgrenze erreicht" : limit.map { ", Grenze \($0) min" } ?? ""

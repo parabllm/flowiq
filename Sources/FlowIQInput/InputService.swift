@@ -34,6 +34,7 @@ public final class InputService: Sendable {
         state = Mutex(State(machine: GestureMachine(profile: profile)))
     }
     public func start() throws {
+        guard !state.withLock({ $0.watching }) else { return }  // idempotent (main thread): one handler, set once
         try source.start { [weak self] event in self?.step(event.at) { $0.handle(event) } }
         state.withLock { $0.watching = true }
     }

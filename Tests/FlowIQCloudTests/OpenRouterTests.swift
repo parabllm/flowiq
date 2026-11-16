@@ -68,7 +68,28 @@ struct OpenRouterTests {
         let provider = try #require(body["provider"] as? [String: Any])
         #expect(provider["data_collection"] as? String == "deny" && provider["allow_fallbacks"] as? Bool == false)
         let options = (provider["options"] as? [String: Any])?["elevenlabs"] as? [String: Any]
-        #expect(options?["diarize"] as? Bool == true && options?["num_speakers"] as? Int == 8)
+        #expect(body["diarize"] as? Bool == true, "`diarize` is a field of the request itself (doc 16.11.)")
+        #expect(options?["num_speakers"] as? Int == 8)
+    }
+
+    /// The documented answer names a speaker as a number (`speaker`) or as `speaker_label`, not as `speaker_id`.
+    @Test func speakersAsNumbersOrLabelsStayApart() async throws {
+        let numbers = Service { _, _ in
+            (Self.json(["words": [["word": "eins", "start": 1.0, "end": 1.4, "speaker": 0],
+                                  ["word": "zwei", "start": 2.0, "end": 2.4, "speaker": 1],
+                                  ["word": "drei", "start": 3.0, "end": 3.4, "speaker_label": "speaker_7"]]]), 200)
+        }
+        let result = try await Self.batch(numbers, seconds: 30).run(Self.job(), model: "elevenlabs/scribe-v2")
+        #expect(result.segments.map(\.speaker) == ["speaker_0", "speaker_1", "speaker_2"], "numbered in order")
+    }
+
+    /// 400 and 422 end the job at once with the answer's reason; a second try of the same request cannot help.
+    @Test func aRefusedRequestIsNotTriedAgain() async throws {
+        let service = Service { _, _ in (Self.json(["error": ["code": 400, "message": "unknown format"]]), 400) }
+        await #expect(throws: PostFailure.rejected("400 400 unknown format")) {
+            try await Self.batch(service).run(Self.job(), model: "elevenlabs/scribe-v2")
+        }
+        #expect(service.requests.withLock { $0.count } == 1)
     }
 
     /// 1,500 s give two pieces, windows 0..<610 and 590..<1500; the overlap words come twice, once each piece keeps;

@@ -91,7 +91,7 @@ extension GalleryTests {
             })
         }
         out.append(step("g-panotti", "Panotti läuft gleichzeitig: Warnzeile, Fn ruht") { $0.ui.keysShared = true })
-        out += menus + penList + mainSteps
+        out += menus + penList + mainSteps + renewSteps
         out.append(Step(id: "g-modellwahl-offen", caption: "OpenRouter-Modellwahl aufgeklappt: Preis je Stunde, "
                         + "Sprecher und Wortzeiten, eigene ID") {
             let m = self.app()
@@ -153,16 +153,16 @@ extension GalleryTests {
                 let r = RecordingsModel(), (mac, cloud) = ("Mitschrift auf dem Mac", "Mitschrift über ElevenLabs")
                 r.rows = [RecordingRow(url: URL(filePath: "/t/a.md"), date: now.addingTimeInterval(-7_200),
                                        kind: "Call", duration: "42:10", language: "Deutsch", live: mac,
-                                       post: .waiting, audio: nil),
+                                       post: .waiting, audio: nil, hasAudio: true),
                           RecordingRow(url: URL(filePath: "/t/b.md"), date: now.addingTimeInterval(-day), kind: "Raum",
                                        duration: "1:12:03", language: "Deutsch", live: cloud, post: .done,
-                                       audio: nil),
+                                       audio: nil, hasAudio: true),
                           RecordingRow(url: URL(filePath: "/t/c.md"), date: now.addingTimeInterval(-day * 2),
                                        kind: "Rekorder", duration: "08:40", language: "Deutsch", live: mac,
-                                       post: .paused, audio: nil),
+                                       post: .paused, audio: nil, hasAudio: true),
                           RecordingRow(url: URL(filePath: "/t/d.md"), date: now.addingTimeInterval(-day * 4),
                                        kind: "Raum", duration: "55:02", language: "Englisch", live: mac,
-                                       post: .local, audio: nil)]
+                                       post: .local, audio: nil, hasAudio: true)]
                 func name(_ n: String, _ heard: [(String, VariantStatus)]) -> CanonEntry {
                     CanonEntry(id: n, canonical: n, kind: .name, family: nil, spokenForms: [],
                                hearingVariants: heard.map { HearingVariant(id: $0.0, heard: $0.0.split(separator: " ")

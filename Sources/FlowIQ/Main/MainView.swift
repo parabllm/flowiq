@@ -83,7 +83,7 @@ struct MainView: View {
                     .frame(minHeight: t.Size.control).padding(.top, t.Main.top).accessibilityAddTraits(.isHeader)
                 switch model.ui.section {
                 case .history: HistoryPane(model: history, keep: model.settings.keepDictationInClipboard,
-                                           stepBack: { model.mainWindow.stepBack() })
+                                           stepBack: { model.mainWindow.stepBack() }, key: model.ui.hasKey)
                 case .recordings: RecordingsPane(model: recordings, app: model)
                 case .words: WordsSection(words: model.parts.words, panotti: model.panotti != nil, names: model.names,
                                           review: model.review)

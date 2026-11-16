@@ -7,7 +7,9 @@ public protocol KeychainPort: Sendable {
 }
 
 /// The two cloud accounts (16.11.), one keychain item each under the profile's service name (M.7, R-100).
-public enum CloudProvider: String, Sendable, CaseIterable { case elevenLabs = "elevenlabs", openRouter = "openrouter" }
+public enum CloudProvider: String, Sendable, CaseIterable { case elevenLabs = "elevenlabs", openRouter = "openrouter"
+    public var keyPrefix: String { self == .elevenLabs ? "sk_" : "sk-or-" }  // an id pasted as the key lacks it
+}
 
 /// The key lives only in the keychain; this type is its only reader and writer.
 public struct CloudKeys: Sendable {

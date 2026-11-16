@@ -12,6 +12,7 @@ struct QueuedJob: Codable, Sendable {
     let id: String, file: String?, audio: [String], mode: RecordingMode, language: String, seconds: Double
     var attempts = 0, due: Date, paused = false, held = false, empties: Int? = nil
     var choice: PostService? = nil, model: String? = nil  // "Nachlauf jetzt" with its own service (main window)
+    var reason: String? = nil  // the service refused the request (400): its own words, the job waits for a click
 }
 
 /// The durable queue `nachlauf/warteschlange.jsonl` (A.10); an unreadable line is set aside and reported.
@@ -42,6 +43,12 @@ public actor PostQueue {
     func release(paused: Bool, at now: Date) {
         for i in jobs.indices where paused || !jobs[i].paused { jobs[i].due = now }
     }
+    /// A new key (16.11.): what the service refused or the key paused runs once more; empty results stay stuck.
+    func rekey(at now: Date) {
+        for i in jobs.indices where jobs[i].reason != nil || jobs[i].paused && jobs[i].empties == nil {
+            (jobs[i].due, jobs[i].paused) = (now, false)
+        }
+    }
     func held(_ mode: RecordingMode) -> [QueuedJob] { jobs.filter { $0.mode == mode } }
     private func save() {
         do {
@@ -51,7 +58,7 @@ public actor PostQueue {
     }
 }
 
-public enum AftercareTrigger: Sendable { case appStart, networkBack, click, timer }
+public enum AftercareTrigger: Sendable { case appStart, networkBack, click, timer, newKey }
 public enum AftercareState: Sendable, Equatable { case idle, waiting(count: Int), paused(count: Int) }
 
 /// Stop and after-run of every mode (B.2 point 8, A.10, M.1): archive at every stop, then a job or `final-lokal`.
@@ -86,6 +93,8 @@ public actor Aftercare {
             return jobs.isEmpty ? .idle : paused > 0 ? .paused(count: paused) : .waiting(count: jobs.count)
         }
     }
+    /// Why the service refused a waiting job's request (16.11.); such a job is only tried again on a click.
+    public var rejection: String? { get async { await queue.jobs.lazy.compactMap(\.reason).first } }
     /// A first run of this mode's after-run is due or running (the ring at the pill); a retry shows in the menu.
     public func working(_ mode: RecordingMode) async -> Bool {
         await queue.held(mode).contains { !$0.paused && !$0.held && $0.attempts == 0 }
@@ -133,6 +142,7 @@ public actor Aftercare {
     public func dictationResult(id: String) -> String? { dictations[id]?["result"] }
     public func insertedText(id: String) -> String? { dictations[id]?["inserted"] }
     public func trigger(_ trigger: AftercareTrigger) async {
+        if trigger == .newKey { await queue.rekey(at: now()) }
         if trigger != .timer { await queue.release(paused: trigger == .click, at: now()) }
         for u in unarchived where !(await queue.jobs.contains { $0.audio.contains { $0.hasPrefix(u.item.path) } }) {
             let place = store.archive(u.item, seconds: u.seconds, mode: u.mode, check: false)
@@ -164,7 +174,8 @@ public actor Aftercare {
         return await queue.jobs.first { (postEnabled[$0.mode] == true || $0.choice != nil) && ($0.held ? !limit
             : $0.due <= t) }
     }
-    /// One try; at the month's limit the job is held (M.8); quota and key pause a day, else 1, 5, 15, 60 min.
+    /// One try; at the month's limit the job is held (M.8); quota and key pause a day, else 1, 5, 15, 60 min;
+    /// a request the service calls wrong (400) waits for a click, since the same request fails the same way.
     private func attempt(_ queued: QueuedJob) async {
         var job = queued
         if await usage?.limitReached == true {
@@ -196,25 +207,54 @@ public actor Aftercare {
                 "ms": .double((ContinuousClock.now - began) / .milliseconds(1)),
                 "attempt": .int(Int64(job.attempts + 1))]))
             await queue.remove(job.id)
-            guard let ledger, let stage else { return }  // deviations become proposals, never rules (N.3, R-113)
-            let day = Int(now().timeIntervalSince1970 / 86_400)
-            do { try await ledger.observe(local: local, postRun: raw, ref: job.id, day: day, stage: stage) } catch {
-                store.log.record(LogEvent("nachlauf_ledger_failed", level: .error))
-            }
+            await learn(local, raw, ref: job.id, stage)
         } catch {
             let failure = error as? PostFailure, emptyRun = failure == .empty
             if failure?.sent == true { await count(job) }  // sent is sent, also when the answer fails (R-101)
             job.empties = emptyRun ? (job.empties ?? 0) + 1 : nil
-            let waits = [.quotaExhausted, .keyMissing, .notAllowed].contains(failure)
-                || job.empties ?? 0 >= Self.emptyLimit
-            (job.attempts, job.paused) = (job.attempts + 1, waits)
-            job.due = job.empties ?? 0 >= Self.emptyLimit ? .distantFuture
+            if case .rejected(let why) = failure { job.reason = why } else { job.reason = nil }
+            let stuck = job.reason != nil || job.empties ?? 0 >= Self.emptyLimit
+            (job.attempts, job.paused) = (job.attempts + 1,
+                                          stuck || [.quotaExhausted, .keyMissing, .notAllowed].contains(failure))
+            job.due = stuck ? .distantFuture
                 : now().addingTimeInterval(job.paused ? 86_400 : [60, 300, 900, 3600][min(job.attempts, 4) - 1])
             await queue.put(job)
             await mark(job, job.paused ? "angehalten" : "wartet")
             let reason = failure.map { "\($0)" } ?? "local"
             store.log.record(LogEvent("nachlauf_failed", level: .error, ["reason": .string(reason)]))
         }
+    }
+    /// Deviations become proposals, never rules (N.3, R-113).
+    private func learn(_ local: String, _ raw: String, ref: String, _ stage: TextStage?) async {
+        guard let ledger, let stage else { return }
+        let day = Int(now().timeIntervalSince1970 / 86_400)
+        do { try await ledger.observe(local: local, postRun: raw, ref: ref, day: day, stage: stage) } catch {
+            store.log.record(LogEvent("nachlauf_ledger_failed", level: .error))
+        }
+    }
+    /// "Mit ElevenLabs neu erkennen" (Verlauf, 16.11.): a kept dictation through the after-run at once, on a click.
+    /// The month's limit holds, the text stage runs over the result, the ledger learns as from any after-run.
+    public func redo(_ d: DictationJob) async throws -> String {
+        guard await usage?.limitReached != true else { throw PostFailure.notAllowed }
+        let job = QueuedJob(id: d.id, file: nil, audio: [d.audio.path], mode: .dictation, language: d.language,
+                            seconds: d.seconds, due: now())
+        var post = PostJob(audio: [d.audio], language: d.language, terms: Array(await terms().prefix(100)),
+                           mode: .dictation)
+        post.choice = .elevenLabs
+        let stage = await textStage?(), result: PostTranscript
+        do { result = try await processor.process(post) } catch {
+            if (error as? PostFailure)?.sent == true { await count(job) }
+            throw error
+        }
+        await count(job)
+        let raw = result.segments.map(\.text).joined(separator: " ")
+        guard !raw.isEmpty else { throw PostFailure.empty }
+        let text = await store.staged(raw, stage)
+        note(["id": d.id, "result": text])
+        store.log.record(LogEvent("nachlauf_done", ["mode": "dictation", "seconds": .double(d.seconds),
+                                                    "redo": .bool(true)]))
+        await learn(d.insertedText, raw, ref: d.id, stage)
+        return text
     }
     private func count(_ job: QueuedJob, _ kind: UsageKind = .post) async {  // per service (OpenRouter, 16.11.)
         for source in Self.sources[job.mode] ?? [] { await usage?.record(source, kind, seconds: job.seconds) }

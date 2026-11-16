@@ -103,13 +103,13 @@ struct RecordingPane: View {
             }
             SettingRow(title: "ElevenLabs", sub: "Live-Mitschrift und genauere Fassung") {
                 keyField("ElevenLabs", has: k, text: $model.ui.keyDraft, openRouter: false).focused($keyFocused)
-                state(k)
+                state(k, .elevenLabs)
             }
             SettingRow(title: "OpenRouter", sub: "nur genauere Fassung, viele Modelle") {
                 VStack(alignment: .leading, spacing: t.Spacing.s6) {
                     HStack(spacing: t.Spacing.s12) {
                         keyField("OpenRouter", has: o, text: $model.ui.orDraft, openRouter: true)
-                        state(o)
+                        state(o, .openRouter)
                     }
                     modelPicker
                 }
@@ -150,10 +150,11 @@ struct RecordingPane: View {
         Text(text).textStyle(FlowIQTheme.Font.caption, FlowIQTheme.Color.textMuted)
             .frame(width: FlowIQTheme.Main.live, alignment: .leading)
     }
-    private func state(_ has: Bool) -> some View {
-        let t = FlowIQTheme.self
-        return Text(has ? "gespeichert" : "fehlt")
-            .textStyle(t.Font.micro, has ? t.Color.successText : t.Color.textMuted)
+    private func state(_ has: Bool, _ p: CloudProvider) -> some View {
+        let t = FlowIQTheme.self, wrong = model.ui.keyWrong.contains(p)
+        return Text(wrong ? AppModel.keyHint(p) : has ? "gespeichert" : "fehlt")
+            .textStyle(t.Font.micro, wrong ? t.Color.warningText : has ? t.Color.successText : t.Color.textMuted)
+            .fixedSize(horizontal: false, vertical: true)
     }
     private func toggle(_ on: Bool, _ set: @escaping @MainActor @Sendable (Bool) -> Void) -> some View {
         Toggle(isOn: Binding(get: { on }, set: set)) { EmptyView() }.toggleStyle(FlowSwitch()).fixedSize()

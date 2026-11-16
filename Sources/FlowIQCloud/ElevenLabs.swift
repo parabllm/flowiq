@@ -177,15 +177,13 @@ public actor ElevenLabsLiveRecognizer: LiveRecognizer {
     }
 }
 
-/// The after-run over ElevenLabs Scribe (A.10, [D] never run): one upload per track; 401 key, 402 and 429 quota.
+/// The after-run over ElevenLabs Scribe (A.10): one upload per track; failures as `OpenRouterBatch.failure`.
 public struct ElevenLabsBatch: PostProcessor {
     public let name = "elevenlabs-scribe-v3"
-    let keys: CloudKeys, speakerName: String, badge: CloudBadge?, permit: @Sendable (RecordingMode) async -> Bool
-    /// Only through `CloudGate.batchService`, so the policy is asked before every upload (review 15.11.).
-    init(keys: CloudKeys, speakerName: String = "Ich", badge: CloudBadge? = nil,
-         permit: @escaping @Sendable (RecordingMode) async -> Bool) {
-        (self.keys, self.speakerName, self.badge, self.permit) = (keys, speakerName, badge, permit)
-    }
+    let keys: CloudKeys, permit: @Sendable (RecordingMode) async -> Bool
+    var speakerName = "Ich", badge: CloudBadge? = nil
+    /// Only `CloudGate.batchService` builds it, so the policy is asked before every upload (review 15.11.).
+    var send = OpenRouterBatch.post  // the wire; tests put an artificial service here
     public func process(_ job: PostJob) async throws -> PostTranscript {
         guard job.choice != nil ? true : await permit(job.mode) else { throw PostFailure.notAllowed }
         guard let key = keys.current, let endpoint = URL(string: "https://api.elevenlabs.io/v1/speech-to-text") else {
@@ -206,7 +204,7 @@ public struct ElevenLabsBatch: PostProcessor {
         }
         return PostTranscript.grouped(words, source: name)
     }
-    /// One multipart upload; the key only as `xi-api-key` header (M.7).
+    /// One multipart upload; the key only as `xi-api-key` header (M.7); the file part names its type (16.11.).
     func upload(_ file: URL, _ job: PostJob, key: String, endpoint: URL,
                 diarize: Bool) async throws -> [[String: Any]] {
         let boundary = UUID().uuidString
@@ -217,21 +215,14 @@ public struct ElevenLabsBatch: PostProcessor {
             Data("--\(boundary)\r\nContent-Disposition: form-data; name=\(head)\r\n\r\n".utf8)
         }
         var body = fields.reduce(Data()) { $0 + part("\"\($1.0)\"") + Data("\($1.1)\r\n".utf8) }
-        body += part("\"file\"; filename=\"\(file.lastPathComponent)\"") + (try Data(contentsOf: file))
-        body += Data("\r\n--\(boundary)--\r\n".utf8)
+        body += part("\"file\"; filename=\"audio.\(file.pathExtension)\"\r\nContent-Type: application/octet-stream")
+        body += try Data(contentsOf: file) + Data("\r\n--\(boundary)--\r\n".utf8)
         var request = URLRequest(url: endpoint)
-        (request.httpMethod, request.timeoutInterval) = ("POST", 900)
+        (request.httpMethod, request.timeoutInterval, request.httpBody) = ("POST", 900, body)
         request.setValue(key, forHTTPHeaderField: "xi-api-key")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        let (data, response): (Data, URLResponse)
-        do { (data, response) = try await URLSession.shared.upload(for: request, from: body) } catch {
-            throw PostFailure.networkDown
-        }
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard status == 200 else {
-            throw status == 401 ? PostFailure.keyMissing : [402, 429].contains(status) ? .quotaExhausted
-                : .server(status: status)
-        }
+        let (data, status) = try await send(request)
+        guard status == 200 else { throw OpenRouterBatch.failure(status, data) }
         return (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["words"] as? [[String: Any]] ?? []
     }
 }

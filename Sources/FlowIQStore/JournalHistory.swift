@@ -2,10 +2,11 @@
 public struct HistoryItem: Sendable, Identifiable, Equatable {
     public let id: String, date: Date, text: String, rawText: String, changed: [String], app: String?
     public let result: String?, seconds: Double?, msToText: Double?
+    public let renewed: Bool  // `text` is the ElevenLabs version asked for in the history; `rawText` stays local
     public init(id: String, date: Date, text: String, rawText: String, changed: [String], app: String?,
-                result: String?, seconds: Double?, msToText: Double?) {
+                result: String?, seconds: Double?, msToText: Double?, renewed: Bool = false) {
         (self.id, self.date, self.text, self.rawText, self.changed, self.app) = (id, date, text, rawText, changed, app)
-        (self.result, self.seconds, self.msToText) = (result, seconds, msToText)
+        (self.result, self.seconds, self.msToText, self.renewed) = (result, seconds, msToText, renewed)
     }
 }
 /// What the history card counts, from the journal only (no protocol text).
@@ -80,6 +81,7 @@ extension DictationJournal {
     /// Every recognized dictation, oldest first, with its last insertion result and audio length.
     func items() -> [HistoryItem] {
         var result: [String: String] = [:], app: [String: String] = [:], seconds: [String: Double] = [:]
+        var renewed: [String: String] = [:]  // the newest "renewed" line replaces the shown text (16.11.)
         let all = lines()
         for o in all {
             guard let id = o["id"] as? String else { continue }
@@ -88,15 +90,17 @@ extension DictationJournal {
                 if let a = o["app"] as? String { app[id] = a }
             }
             if o["event"] as? String == "audio", let s = o["seconds"] as? Double { seconds[id] = s }
+            if o["event"] as? String == "renewed" { renewed[id] = o["final_text"] as? String }
         }
         return all.filter { $0["event"] as? String == "recognized" }.compactMap { o in
             guard let id = o["id"] as? String, let text = o["final_text"] as? String else { return nil }
             let changed = Self.decode([Intervention].self, o["intervention_detail"])?.map(\.tAfter) ?? []
             let ms = [o["recognize_ms"], o["stage_ms"]].compactMap { $0 as? Double }.filter { $0 >= 0 }
-            return HistoryItem(id: id, date: Date(timeIntervalSince1970: o["ts"] as? Double ?? 0), text: text,
-                               rawText: o["recognizer_text"] as? String ?? text, changed: changed,
+            return HistoryItem(id: id, date: Date(timeIntervalSince1970: o["ts"] as? Double ?? 0),
+                               text: renewed[id] ?? text, rawText: o["recognizer_text"] as? String ?? text,
+                               changed: renewed[id] == nil ? changed : [],
                                app: app[id] ?? o["app"] as? String, result: result[id], seconds: seconds[id],
-                               msToText: ms.count == 2 ? ms.reduce(0, +) : nil)
+                               msToText: ms.count == 2 ? ms.reduce(0, +) : nil, renewed: renewed[id] != nil)
         }
     }
 }

@@ -4,6 +4,7 @@ import SwiftUI
 struct HistoryPane: View {
     @Bindable var model: HistoryModel
     let keep: Bool, stepBack: () -> Void
+    var key = false  // an ElevenLabs key that may send: without it "neu erkennen" is greyed out
     var body: some View {
         let t = FlowIQTheme.self
         HStack(alignment: .top, spacing: t.Spacing.s12) {
@@ -19,6 +20,11 @@ struct HistoryPane: View {
         .sheet(isPresented: Binding(get: { model.asking != nil }, set: { if !$0 { model.asking = nil } })) {
             DeleteConfirm(count: model.asking?.count ?? 0, onDelete: {
                 Task { await model.delete(model.asking ?? []) } }, onCancel: { model.asking = nil })
+        }
+        .sheet(isPresented: Binding(get: { model.renewing != nil }, set: { if !$0 { model.renewing = nil } })) {
+            let list = model.renewing?.list ?? []  // more than 10 dictations or 30 minutes: asked first
+            DeleteConfirm(count: list.count, onDelete: { Task { await model.renew(list, confirmed: true) } },
+                          onCancel: { model.renewing = nil }, renew: model.renewing?.ask)
         }
     }
     private var header: some View {
@@ -60,7 +66,7 @@ struct HistoryPane: View {
                     VStack(spacing: 0) {
                         ForEach(Array(day.items.enumerated()), id: \.element.id) { n, item in
                             HistoryRow(model: model, item: item, keep: keep, last: n == day.items.count - 1,
-                                       stepBack: stepBack)
+                                       stepBack: stepBack, key: key)
                         }
                     }
                     .clipShape(RoundedRectangle(cornerRadius: t.Radius.md, style: .continuous)).card()
@@ -82,6 +88,7 @@ struct HistoryPane: View {
 struct HistoryRow: View {
     @Bindable var model: HistoryModel
     let item: HistoryItem, keep: Bool, last: Bool, stepBack: () -> Void
+    var key = false
     @State private var hover = false
     var body: some View {
         let t = FlowIQTheme.self, picked = model.selection.contains(item.id)
@@ -103,7 +110,8 @@ struct HistoryRow: View {
                 if let again = model.again[item.id] { aside("Neu erkannt", again) }
                 HStack(spacing: t.Spacing.s6) {
                     Text([HistoryModel.appName(item.app), HistoryModel.outcomeText(outcome),
-                          item.changed.isEmpty ? nil : "von FlowIQ geändert"].compactMap { $0 }
+                          item.changed.isEmpty ? nil : "von FlowIQ geändert",
+                          item.renewed ? "mit ElevenLabs neu erkannt" : nil].compactMap { $0 }
                         .joined(separator: " · "))
                         .textStyle(t.Font.micro, outcome == .inserted ? t.Color.textMuted : t.Color.warningText)
                     if model.busy.contains(item.id) { ProgressView().controlSize(.mini) }
@@ -135,6 +143,10 @@ struct HistoryRow: View {
             icon("doc.on.doc", "Kopieren") { model.copy(list) }
             icon("arrow.uturn.forward", "Erneut einfügen") { model.insertAgain(item, hide: stepBack) }
             icon("pencil", "Korrigieren") { model.correct(item.id) }
+            icon("arrow.clockwise", key ? "Mit ElevenLabs neu erkennen" : "ElevenLabs-Schlüssel fehlt") {
+                Task { await model.renew(list) }
+            }
+            .disabled(!key)
             Menu {
                 Button(model.raw.contains(item.id) ? "Rohfassung ausblenden" : "Rohfassung zeigen") {
                     model.raw.formSymmetricDifference([item.id])
@@ -199,17 +211,20 @@ struct StatsCard: View {  // counted from the journal only
 /// The question before deleting, in the window's own build so it shows in the gallery too; Escape cancels.
 struct DeleteConfirm: View {
     let count: Int, onDelete: () -> Void, onCancel: () -> Void
+    var renew: (title: String, text: String)? = nil  // the same question before a large re-recognition (16.11.)
     var body: some View {
         let t = FlowIQTheme.self
         VStack(alignment: .leading, spacing: t.Spacing.s8) {
-            Text(count == 1 ? "Dieses Diktat löschen?" : "\(count) Diktate löschen?").textStyle(t.Font.smallMedium)
-            Text("Text und Audio gehen von diesem Mac. Das lässt sich nicht zurückholen.")
+            Text(renew?.title ?? (count == 1 ? "Dieses Diktat löschen?" : "\(count) Diktate löschen?"))
+                .textStyle(t.Font.smallMedium)
+            Text(renew?.text ?? "Text und Audio gehen von diesem Mac. Das lässt sich nicht zurückholen.")
                 .textStyle(t.Font.caption, t.Color.textMuted).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: t.Spacing.s8) {
                 Spacer(minLength: 0)
                 Button("Abbrechen", action: onCancel).buttonStyle(.bordered).keyboardShortcut(.cancelAction)
-                Button("Löschen", role: .destructive, action: onDelete).buttonStyle(.borderedProminent)
-                    .tint(t.Color.warning)
+                Button(renew == nil ? "Löschen" : "Neu erkennen", role: renew == nil ? .destructive : nil,
+                       action: onDelete).buttonStyle(.borderedProminent)
+                    .tint(renew == nil ? t.Color.warning : t.Color.accent)
             }
             .controlSize(.large).padding(.top, t.Spacing.s8).environment(\.controlActiveState, .key)
         }

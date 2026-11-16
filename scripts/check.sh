@@ -53,6 +53,9 @@ forbid "unsafeFlags oder abgeschaltete Isolationsprüfung" \
   "$(grep -nE 'unsafeFlags|disable-dynamic-actor-isolation' Package.swift)"
 forbid "Audio-Systemeinstellung setzen" "$(scan 'AudioObjectSetPropertyData')"
 forbid "DispatchQueue.main.sync" "$(scan 'DispatchQueue\.main\.sync')"
+# A closure (also in a tuple) as a Mutex value gains two thunks at every withLock: the key handler sank one level
+# per key until the tap thread overflowed (16.11.). A struct field holds it as stored (TapHandlerChainTests).
+forbid "Closure direkt in Mutex" "$(grep -rnE 'Mutex<\(*(@[A-Za-z]+ +)*\([^>]*->' Sources)"
 forbid "NSLog" "$(scan 'NSLog\(')"
 forbid "eraseFile" "$(scan '[Ee]raseFile')"
 forbid "NSSpellChecker außerhalb SystemWordOracle und flowiq-tool" "$(scan 'NSSpellChecker' \

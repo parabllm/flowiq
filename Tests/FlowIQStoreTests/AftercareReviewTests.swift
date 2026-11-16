@@ -105,6 +105,57 @@ struct AftercareReviewTests {
         #expect(try rig.field(file, "panotti_phase") == "final-elevenlabs")
     }
 
+    /// 16.11.: every upload came back 400 and was tried again within minutes. A wrong request waits for a click,
+    /// its reason stands in the queue, in the log and in `rejection` for the menu.
+    @Test func aRefusedRequestWaitsForAClickWithItsReason() async throws {
+        let why = "400 invalid_parameters keyterms zu lang"
+        let rig = try Rig([.rejected(why), nil])
+        defer { rig.remove() }
+        let file = try await rig.room()
+        #expect(await rig.aftercare.rejection == why)
+        #expect(await rig.aftercare.visibleState == .paused(count: 1))
+        #expect(try rig.field(file, "nachlauf") == "angehalten")
+        for trigger in [AftercareTrigger.timer, .appStart, .networkBack] { await rig.later(90_000, trigger) }
+        #expect(await rig.post.calls == 1, "no timer, start or network brings it back")
+        await rig.log.flush()
+        let log = try String(contentsOf: rig.root.appending(path: "protokoll/ereignisse.ndjson"), encoding: .utf8)
+        #expect(log.contains("nachlauf_failed") && log.contains(why))
+        let queue = try String(contentsOf: rig.locations.dataFolder.appending(path: "nachlauf/warteschlange.jsonl"),
+                               encoding: .utf8)
+        #expect(queue.contains(why))
+        await rig.later(1, .click)
+        #expect(await rig.post.calls == 2)
+        #expect(await rig.aftercare.rejection == nil)
+        #expect(try rig.field(file, "panotti_phase") == "final-elevenlabs")
+    }
+
+    static func entry(_ name: String, family: String? = nil, used daysAgo: Double? = nil, benefit: Int = 0,
+                      status: EntryStatus = .confirmed) -> CanonEntry {
+        let last = daysAgo.map { Date(timeIntervalSince1970: 1_800_000_000 - $0 * 86_400) }
+        return CanonEntry(id: "e-" + name, canonical: name, kind: .name, family: family, spokenForms: [],
+                          hearingVariants: [], status: status, origin: .seed, compound: .hyphen,
+                          counters: Counters(benefit: benefit, lastAppliedAt: last),
+                          createdAt: Date(timeIntervalSince1970: 0), confirmedAt: nil)
+    }
+
+    /// LEXIKON-KONZEPT 6: family members first, then by use in the last 30 days; the cut was alphabetical before,
+    /// so with more entries than places the important names fell out.
+    @Test func cloudTermsKeepFamilyAndRecentlyUsedNamesWhenTheListIsCut() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        var entries = (0..<120).map { Self.entry(String(format: "Aaa%03d", $0)) }  // would fill an alphabetical cut
+        entries += [Self.entry("Zeta-Familie", family: "f1"), Self.entry("Yps-Familie", family: "f1"),
+                    Self.entry("Wenig", used: 3, benefit: 1), Self.entry("Viel", used: 10, benefit: 9),
+                    Self.entry("Alt", used: 45, benefit: 50), Self.entry("Vorschlag", family: "f1", status: .proposed),
+                    Self.entry(String(repeating: "x", count: 51), family: "f1"), Self.entry("Viel", used: 1)]
+        let post = CloudTerms.post(from: entries, now: now), live = CloudTerms.live(from: entries, now: now)
+        #expect(post.count == 100 && live.count == 50 && Set(post).count == 100)
+        #expect(Array(post.prefix(5)) == ["Yps-Familie", "Zeta-Familie", "Viel", "Wenig", "Aaa000"])
+        #expect(Array(live.prefix(4)) == ["Yps-Familie", "Zeta-Familie", "Viel", "Wenig"])
+        #expect(!post.contains("Alt") && !post.contains("Vorschlag"), "use older than 30 days ranks by name only")
+        #expect(post.allSatisfy { $0.count <= 50 }, "the service takes at most 50 characters per term")
+        #expect(post == CloudTerms.post(from: entries.reversed(), now: now), "independent of the entries' order")
+    }
+
     @Test func anUnreadableQueueLineIsSetAsideAndReported() async throws {
         let rig = try Rig()
         defer { rig.remove() }

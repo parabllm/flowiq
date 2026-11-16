@@ -48,6 +48,11 @@ final class DevicesModel {
         _ = await importer?.scan()  // switched off this only looks whether a recorder is plugged in
         await load()
     }
+    /// Replaced by the devices of a new storage place: no observer and no progress reader stays behind (16.11.).
+    func stop() {
+        watch?.stop()
+        importer?.close()
+    }
     /// Menu or tab opens: what is plugged in now (no observer runs while the switch is off, R-076).
     func look() async {
         await importer?.look()

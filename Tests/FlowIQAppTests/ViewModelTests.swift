@@ -94,6 +94,8 @@ private func items(_ s: MenuState) -> [MenuEntry] { StatusMenuModel.entries(s).f
             (.limitReached(600), "Monatsgrenze 10 h erreicht, lokal weiter", .settings),
             (.keyRejected, "ElevenLabs-Schlüssel fehlt oder abgelehnt", .keyField),
             (.postWaiting(2), "Genauere Fassung wartet (2)", .retryPost),
+            (.postRejected("400 invalid_parameters keyterms"),
+             "Genauere Fassung wartet: der Dienst lehnt die Anfrage ab\n400 invalid_parameters keyterms", .retryPost),
             (.notInserted, "Kein Textfeld, Diktat liegt bereit", .insertLast),
             (.folderMissing, "Ablageordner fehlt, Aufnahme liegt sicher in FlowIQ", .chooseFolder),
         ]

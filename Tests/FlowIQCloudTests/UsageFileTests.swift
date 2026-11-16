@@ -33,6 +33,16 @@ struct UsageFileTests {
         #expect(abs(await UsageMeter(folder: folder, fs: fs, now: { now }).seconds(.room, .live) - 30) < 0.01)
     }
 
+    /// 16.11.: the app never made the folder, so every save failed with `usage_unsaved`.
+    @Test func theFirstSaveMakesTheMissingFolder() async throws {
+        defer { remove() }
+        let fs = SafeFS(confinedTo: folder.deletingLastPathComponent())
+        let meter = UsageMeter(folder: folder, fs: fs, now: { now })
+        await meter.record(.dictation, .post, seconds: 12)
+        #expect(FileManager.default.fileExists(atPath: file.path))
+        #expect(abs(await UsageMeter(folder: folder, fs: fs, now: { now }).seconds(.dictation, .post) - 12) < 0.01)
+    }
+
     @Test func whenSettingAsideFailsTheFileIsNeverOverwritten() async throws {
         defer { remove() }
         try prepare("{kaputt")

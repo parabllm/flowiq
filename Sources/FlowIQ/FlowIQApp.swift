@@ -51,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = StatusMenu(profile: profile) { model.menuState }
         menu.perform = { model.perform($0) }
         menu.onOpen = { Task { await model.parts.runtime?.sample("menu"); await model.refresh() } }
+        menu.onClose = { model.ui.crashNote = nil }
         model.parts.menu = menu
         model.pill.onClick = { menu.popUp(in: $0) }  // stop runs over the keys and the menu (16.11.)
         DistributedNotificationCenter.default().addObserver(forName: Self.wake, object: nil, queue: .main) { _ in
@@ -304,7 +305,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task {  // a new standard device or Bluetooth headset reaches the menu at once
             for await _ in stack.conductor.deviceChanges { await model.refresh() }
         }
-        await recorder.rescue()
+        let rescued = await recorder.rescue()  // after a crash: one line in the menu, gone once it closed (16.11.)
+        if runtime.crashed { model.ui.crashNote = AppModel.crashNote(profile.displayName, rescued) }
         await recorder.filing.aftercare.trigger(.appStart)
     }
 }

@@ -142,7 +142,8 @@ struct ResourceProbeTests {
         #expect(sample.footprintBytes > 1_000_000)
         #expect(sample.residentBytes > 1_000_000)
         #expect(sample.cpuNanos > 0)
-        #expect(sample.fields.keys.sorted() == ["cpu_ms", "footprint_mb", "resident_mb"])
+        #expect(sample.threads > 0)  // 16.11.: threads and pid joined the line (leak watch)
+        #expect(sample.fields.keys.sorted() == ["cpu_ms", "footprint_mb", "pid", "resident_mb", "threads"])
     }
 
     @Test func cpuTimeGrowsWithWork() async throws {

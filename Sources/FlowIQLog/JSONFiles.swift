@@ -19,6 +19,17 @@ public enum JSON {
     public static func line<T: Encodable>(_ value: T) throws -> Data {
         try JSONEncoder().encode(value) + Data("\n".utf8)
     }
+    /// What a service's error answer says: code, field and message under `detail` or `error`, as one line.
+    public static func errorText(_ body: Data) -> String {
+        var json: Any = [:]
+        do { json = try JSONSerialization.jsonObject(with: body) } catch { json = [:] }
+        let top = json as? [String: Any] ?? [:], inner = top["detail"] ?? top["error"] ?? ""
+        let d = inner as? [String: Any] ?? (inner as? [[String: Any]])?.first ?? ["message": inner]
+        func text(_ value: Any?) -> String? { value.map { "\($0)" } }
+        let field = text(d["param"]) ?? (d["loc"] as? [Any])?.map { "\($0)" }.joined(separator: ".")
+        return [text(d["code"] ?? d["type"]), field, text(d["message"] ?? d["msg"])].compactMap { $0 }
+            .filter { !$0.isEmpty }.joined(separator: " ")
+    }
     /// Every line that decodes as `T`; a torn line costs only itself.
     public static func decode<T: Decodable>(_ lines: [Data], as type: T.Type) -> [T] {
         lines.compactMap { line in

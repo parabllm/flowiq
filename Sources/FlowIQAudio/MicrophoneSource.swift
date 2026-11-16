@@ -34,6 +34,7 @@ public actor MicrophoneSource: CaptureSource {
                 sink.end("device disconnected")
             },
         ]
+        Census.add("mic_observers", observers.count)
         self.session = session
         self.sink = sink
         session.startRunning()
@@ -44,6 +45,7 @@ public actor MicrophoneSource: CaptureSource {
     }
     public func stop() async {
         observers.forEach(NotificationCenter.default.removeObserver)
+        Census.add("mic_observers", -observers.count)
         observers = []
         session?.stopRunning()
         session = nil

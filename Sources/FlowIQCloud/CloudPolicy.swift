@@ -92,8 +92,8 @@ public enum CloudGate {
                                     models: [OpenRouterModel] = OpenRouterModels.load()) throws -> any PostProcessor {
         try check(profile, order, log)
         let permit: @Sendable (RecordingMode) async -> Bool = { await policy().allows(.post, for: $0) }
-        let elevenLabs = ElevenLabsBatch(keys: CloudKeys(keychain: keychain, profile: profile),
-                                         speakerName: speakerName, badge: badge, permit: permit)
+        let elevenLabs = ElevenLabsBatch(keys: CloudKeys(keychain: keychain, profile: profile), permit: permit,
+                                         speakerName: speakerName, badge: badge)
         let openRouter = pieces.map { cut in  // without a cutter (`AudioPieces.cut`) OpenRouter is not offered
             OpenRouterBatch(keys: CloudKeys(keychain: keychain, profile: profile, provider: .openRouter),
                             speakerName: speakerName, badge: badge, permit: permit, send: OpenRouterBatch.post,

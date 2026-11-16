@@ -41,6 +41,8 @@ public actor DeviceImporter {
             log.record(LogEvent("devices_config_unreadable", level: .error))  // stays off, the file stays as it is
         }
     }
+    /// The importer was replaced (new storage place): the progress stream ends, and with it its reader.
+    public nonisolated func close() { sink.finish() }
     public func setEnabled(_ on: Bool) throws {
         config.enabled = on
         try save()

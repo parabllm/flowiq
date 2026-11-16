@@ -9,6 +9,7 @@ nonisolated struct Running: Equatable, Sendable {
 /// A state the user should see with its next step (review M5), one line at the top of the menu.
 nonisolated enum AppAlert: Equatable, Sendable {
     case micSilent, permission(String), networkDown, limitReached(Int), keyRejected, postWaiting(Int)
+    case postRejected(String)  // the service calls the request wrong (400): its reason, tried again on a click
     case notInserted, folderMissing, problem(String), noDesktop, tapStopped, trouble(LiveTrouble), panottiKeys
     /// What the pill said before it lost its text (16.11.): a failed dictation (audio kept or not), a headset
     /// lost mid-recording, a device import that failed (file, count, reason), a recording the Mac slept through.
@@ -24,6 +25,7 @@ nonisolated enum AppAlert: Equatable, Sendable {
         case .limitReached(let m): "Monatsgrenze \(Duration.seconds(m * 60).hoursAndMinutes) erreicht, lokal weiter"
         case .keyRejected: "ElevenLabs-Schlüssel fehlt oder abgelehnt"
         case .postWaiting(let n): "Genauere Fassung wartet (\(n))"
+        case .postRejected(let why): "Genauere Fassung wartet: der Dienst lehnt die Anfrage ab\n\(why.prefix(90))"
         case .notInserted: "Kein Textfeld, Diktat liegt bereit"
         case .folderMissing: "Ablageordner fehlt, Aufnahme liegt sicher in FlowIQ"
         case .problem(let text): text
@@ -75,7 +77,7 @@ nonisolated enum AppAlert: Equatable, Sendable {
         case .networkDown: ("Erneut verbinden", .reconnect)
         case .limitReached: ("Grenze ändern …", .settings)
         case .keyRejected: ("Schlüssel eintragen …", .keyField)
-        case .postWaiting: ("Jetzt versuchen", .retryPost)
+        case .postWaiting, .postRejected: ("Jetzt versuchen", .retryPost)
         case .notInserted: ("Einfügen ⌃⌘V", .insertLast)
         case .folderMissing: ("Ordner wählen …", .chooseFolder)
         case .problem: ("Einrichten …", .setup)  // a failed start or save: permissions and folders come first
@@ -252,7 +254,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength), profile: Profile
     var state: () -> MenuState
     var perform: (MenuAction) -> Void = { _ in }
-    var onOpen: () -> Void = {}
+    var onOpen: () -> Void = {}, onClose: () -> Void = {}
     init(profile: Profile, state: @escaping () -> MenuState) {
         (self.profile, self.state) = (profile, state)
         super.init()
@@ -298,6 +300,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     }
     private var alternate = false  // the key hints follow the key scheme, not the profile (16.11.)
     func menuWillOpen(_ menu: NSMenu) { onOpen() }  // run time and levels are read at every opening (R-051)
+    func menuDidClose(_ menu: NSMenu) { onClose() }
     private func fill(_ menu: NSMenu, _ entries: [MenuEntry]) {
         menu.removeAllItems()
         for e in entries { menu.addItem(make(e)) }
